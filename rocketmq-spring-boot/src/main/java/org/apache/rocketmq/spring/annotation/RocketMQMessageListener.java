@@ -23,7 +23,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-@Target(ElementType.TYPE)
+@Target({ElementType.TYPE,ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface RocketMQMessageListener {
@@ -109,4 +109,9 @@ public @interface RocketMQMessageListener {
      * The property of "access-channel".
      */
     String accessChannel() default ACCESS_CHANNEL_PLACEHOLDER;
+
+    /**
+     * Choose whether to use ReplyListener When use RocketMQMessageListener on method
+     */
+    boolean isReplyListener() default false;
 }

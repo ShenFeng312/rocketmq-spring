@@ -17,10 +17,6 @@
 
 package org.apache.rocketmq.spring.autoconfigure;
 
-import java.util.Collections;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 import org.apache.rocketmq.client.AccessChannel;
 import org.apache.rocketmq.spring.annotation.ConsumeMode;
 import org.apache.rocketmq.spring.annotation.MessageModel;
@@ -32,9 +28,8 @@ import org.apache.rocketmq.spring.support.RocketMQMessageConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.AopProxyUtils;
-import org.springframework.aop.scope.ScopedProxyUtils;
 import org.springframework.beans.BeansException;
-import org.springframework.beans.factory.SmartInitializingSingleton;
+import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.beans.factory.support.BeanDefinitionValidationException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
@@ -43,9 +38,12 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.util.StringUtils;
+import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Configuration
-public class ListenerContainerConfiguration implements ApplicationContextAware, SmartInitializingSingleton {
+public class ListenerContainerConfiguration implements ApplicationContextAware, BeanPostProcessor {
     private final static Logger log = LoggerFactory.getLogger(ListenerContainerConfiguration.class);
 
     private ConfigurableApplicationContext applicationContext;
@@ -71,26 +69,33 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
     }
 
     @Override
-    public void afterSingletonsInstantiated() {
-        Map<String, Object> beans = this.applicationContext.getBeansWithAnnotation(RocketMQMessageListener.class)
-            .entrySet().stream().filter(entry -> !ScopedProxyUtils.isScopedTarget(entry.getKey()))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-        beans.forEach(this::registerContainer);
+    public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+        Class<?> clazz = AopProxyUtils.ultimateTargetClass(bean);
+        if (clazz.getAnnotation(RocketMQMessageListener.class) == null) {
+            Method[] methods = clazz.getMethods();
+            for (Method method : methods) {
+                if (method.getAnnotation(RocketMQMessageListener.class) != null) {
+                    registerContainer(beanName, bean, method);
+                }
+            }
+        }
+        else {
+            registerContainer(beanName, bean, null);
+        }
+        return bean;
     }
 
-    private void registerContainer(String beanName, Object bean) {
+    private void registerContainer(String beanName, Object bean, Method method) {
         Class<?> clazz = AopProxyUtils.ultimateTargetClass(bean);
-
-        if (RocketMQListener.class.isAssignableFrom(bean.getClass()) && RocketMQReplyListener.class.isAssignableFrom(bean.getClass())) {
-            throw new IllegalStateException(clazz + " cannot be both instance of " + RocketMQListener.class.getName() + " and " + RocketMQReplyListener.class.getName());
+        RocketMQMessageListener annotation;
+        if (method == null) {
+            validateBean(bean, clazz);
+            annotation = clazz.getAnnotation(RocketMQMessageListener.class);
         }
-
-        if (!RocketMQListener.class.isAssignableFrom(bean.getClass()) && !RocketMQReplyListener.class.isAssignableFrom(bean.getClass())) {
-            throw new IllegalStateException(clazz + " is not instance of " + RocketMQListener.class.getName() + " or " + RocketMQReplyListener.class.getName());
+        else {
+            validateMethod(method, clazz);
+            annotation = method.getAnnotation(RocketMQMessageListener.class);
         }
-
-        RocketMQMessageListener annotation = clazz.getAnnotation(RocketMQMessageListener.class);
 
         String consumerGroup = this.environment.resolvePlaceholders(annotation.consumerGroup());
         String topic = this.environment.resolvePlaceholders(annotation.topic());
@@ -112,7 +117,7 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
         GenericApplicationContext genericApplicationContext = (GenericApplicationContext) applicationContext;
 
         genericApplicationContext.registerBean(containerBeanName, DefaultRocketMQListenerContainer.class,
-            () -> createRocketMQListenerContainer(containerBeanName, bean, annotation));
+            () -> createRocketMQListenerContainer(containerBeanName, bean, annotation, method));
         DefaultRocketMQListenerContainer container = genericApplicationContext.getBean(containerBeanName,
             DefaultRocketMQListenerContainer.class);
         if (!container.isRunning()) {
@@ -127,8 +132,25 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
         log.info("Register the listener to container, listenerBeanName:{}, containerBeanName:{}", beanName, containerBeanName);
     }
 
+    private void validateMethod(Method method, Class<?> clazz) {
+        int parameterCount = method.getParameterCount();
+        if (parameterCount != 1) {
+            throw new IllegalStateException("method" + method.getName() + " of " + clazz.getName() + " hope have one argument but found " + parameterCount);
+        }
+    }
+
+    private void validateBean(Object bean, Class<?> clazz) {
+        if (RocketMQListener.class.isAssignableFrom(bean.getClass()) && RocketMQReplyListener.class.isAssignableFrom(bean.getClass())) {
+            throw new IllegalStateException(clazz + " cannot be both instance of " + RocketMQListener.class.getName() + " and " + RocketMQReplyListener.class.getName());
+        }
+
+        if (!RocketMQListener.class.isAssignableFrom(bean.getClass()) && !RocketMQReplyListener.class.isAssignableFrom(bean.getClass())) {
+            throw new IllegalStateException(clazz + " is not instance of " + RocketMQListener.class.getName() + " or " + RocketMQReplyListener.class.getName());
+        }
+    }
+
     private DefaultRocketMQListenerContainer createRocketMQListenerContainer(String name, Object bean,
-        RocketMQMessageListener annotation) {
+        RocketMQMessageListener annotation, Method method) {
         DefaultRocketMQListenerContainer container = new DefaultRocketMQListenerContainer();
 
         container.setRocketMQMessageListener(annotation);
@@ -146,10 +168,34 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
             container.setSelectorExpression(tags);
         }
         container.setConsumerGroup(environment.resolvePlaceholders(annotation.consumerGroup()));
-        if (RocketMQListener.class.isAssignableFrom(bean.getClass())) {
-            container.setRocketMQListener((RocketMQListener) bean);
-        } else if (RocketMQReplyListener.class.isAssignableFrom(bean.getClass())) {
-            container.setRocketMQReplyListener((RocketMQReplyListener) bean);
+        if (method != null) {
+            if (annotation.isReplyListener()) {
+                container.setRocketMQReplyListener(message -> {
+                    try {
+                        return method.invoke(bean, message);
+                    }
+                    catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+            }
+            else {
+                container.setRocketMQListener(message -> {
+                    try {
+                        method.invoke(bean, message);
+                    }
+                    catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+            }
+
+        }
+        else if (RocketMQListener.class.isAssignableFrom(bean.getClass())) {
+            container.setRocketMQListener((RocketMQListener)bean);
+        }
+        else if (RocketMQReplyListener.class.isAssignableFrom(bean.getClass())) {
+            container.setRocketMQReplyListener((RocketMQReplyListener)bean);
         }
         container.setMessageConverter(rocketMQMessageConverter.getMessageConverter());
         container.setName(name);
