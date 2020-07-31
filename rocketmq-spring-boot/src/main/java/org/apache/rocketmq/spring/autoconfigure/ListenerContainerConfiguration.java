@@ -21,6 +21,8 @@ import org.apache.rocketmq.client.AccessChannel;
 import org.apache.rocketmq.spring.annotation.ConsumeMode;
 import org.apache.rocketmq.spring.annotation.MessageModel;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
+import org.apache.rocketmq.spring.core.BeanMethodRocketMQListener;
+import org.apache.rocketmq.spring.core.BeanMethodRocketMQReplyListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.apache.rocketmq.spring.core.RocketMQReplyListener;
 import org.apache.rocketmq.spring.support.DefaultRocketMQListenerContainer;
@@ -65,7 +67,7 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
 
     @Override
     public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
-        this.applicationContext = (ConfigurableApplicationContext) applicationContext;
+        this.applicationContext = (ConfigurableApplicationContext)applicationContext;
     }
 
     @Override
@@ -101,7 +103,7 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
         String topic = this.environment.resolvePlaceholders(annotation.topic());
 
         boolean listenerEnabled =
-            (boolean) rocketMQProperties.getConsumer().getListeners().getOrDefault(consumerGroup, Collections.EMPTY_MAP)
+            (boolean)rocketMQProperties.getConsumer().getListeners().getOrDefault(consumerGroup, Collections.EMPTY_MAP)
                 .getOrDefault(topic, true);
 
         if (!listenerEnabled) {
@@ -114,7 +116,7 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
 
         String containerBeanName = String.format("%s_%s", DefaultRocketMQListenerContainer.class.getName(),
             counter.incrementAndGet());
-        GenericApplicationContext genericApplicationContext = (GenericApplicationContext) applicationContext;
+        GenericApplicationContext genericApplicationContext = (GenericApplicationContext)applicationContext;
 
         genericApplicationContext.registerBean(containerBeanName, DefaultRocketMQListenerContainer.class,
             () -> createRocketMQListenerContainer(containerBeanName, bean, annotation, method));
@@ -123,7 +125,8 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
         if (!container.isRunning()) {
             try {
                 container.start();
-            } catch (Exception e) {
+            }
+            catch (Exception e) {
                 log.error("Started container failed. {}", container, e);
                 throw new RuntimeException(e);
             }
@@ -168,28 +171,14 @@ public class ListenerContainerConfiguration implements ApplicationContextAware, 
             container.setSelectorExpression(tags);
         }
         container.setConsumerGroup(environment.resolvePlaceholders(annotation.consumerGroup()));
+
         if (method != null) {
-            if (annotation.isReplyListener()) {
-                container.setRocketMQReplyListener(message -> {
-                    try {
-                        return method.invoke(bean, message);
-                    }
-                    catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                });
+            if (method.getReturnType().getName().equals("void")) {
+                container.setRocketMQListener(new BeanMethodRocketMQListener(bean, method));
             }
             else {
-                container.setRocketMQListener(message -> {
-                    try {
-                        method.invoke(bean, message);
-                    }
-                    catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                });
+                container.setRocketMQReplyListener(new BeanMethodRocketMQReplyListener(bean, method));
             }
-
         }
         else if (RocketMQListener.class.isAssignableFrom(bean.getClass())) {
             container.setRocketMQListener((RocketMQListener)bean);

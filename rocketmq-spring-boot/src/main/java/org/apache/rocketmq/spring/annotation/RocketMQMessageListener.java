@@ -23,7 +23,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-@Target({ElementType.TYPE,ElementType.METHOD})
+@Target({ElementType.TYPE, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface RocketMQMessageListener {
@@ -37,8 +37,8 @@ public @interface RocketMQMessageListener {
     /**
      * Consumers of the same role is required to have exactly same subscriptions and consumerGroup to correctly achieve
      * load balance. It's required and needs to be globally unique.
-     *
-     *
+     * <p>
+     * <p>
      * See <a href="http://rocketmq.apache.org/docs/core-concept/">here</a> for further discussion.
      */
     String consumerGroup();
@@ -110,8 +110,4 @@ public @interface RocketMQMessageListener {
      */
     String accessChannel() default ACCESS_CHANNEL_PLACEHOLDER;
 
-    /**
-     * Choose whether to use ReplyListener When use RocketMQMessageListener on method
-     */
-    boolean isReplyListener() default false;
 }
