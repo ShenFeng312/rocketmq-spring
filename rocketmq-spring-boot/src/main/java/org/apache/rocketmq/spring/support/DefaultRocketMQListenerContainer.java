@@ -505,7 +505,14 @@ public class DefaultRocketMQListenerContainer implements InitializingBean,
             throw new RuntimeException("parameterType:" + messageType + " of onMessage method is not supported");
         }
         try {
-            final Method method = targetClass.getMethod("onMessage", clazz);
+            final Method method;
+            if (BeanMethodRocketMQListener.class.isAssignableFrom(targetClass)) {
+                method = ((BeanMethodRocketMQListener) rocketMQListener).getMethod();
+            } else if (BeanMethodRocketMQReplyListener.class.isAssignableFrom(targetClass)) {
+                method = ((BeanMethodRocketMQReplyListener) rocketMQReplyListener).getMethod();
+            } else {
+                method = targetClass.getMethod("onMessage", clazz);
+            }
             return new MethodParameter(method, 0);
         } catch (NoSuchMethodException e) {
             e.printStackTrace();
@@ -520,8 +527,8 @@ public class DefaultRocketMQListenerContainer implements InitializingBean,
         } else {
             targetClass = AopProxyUtils.ultimateTargetClass(rocketMQReplyListener);
         }
-        if (targetClass.isAssignableFrom(BeanMethodRocketMQListener.class) || targetClass.isAssignableFrom(BeanMethodRocketMQReplyListener.class)) {
-            Method method = targetClass.isAssignableFrom(BeanMethodRocketMQListener.class) ? ((BeanMethodRocketMQListener) rocketMQListener).getMethod() : ((BeanMethodRocketMQReplyListener) rocketMQReplyListener).getMethod();
+        if (BeanMethodRocketMQListener.class.isAssignableFrom(targetClass) || BeanMethodRocketMQReplyListener.class.isAssignableFrom(targetClass)) {
+            Method method = BeanMethodRocketMQListener.class.isAssignableFrom(targetClass) ? ((BeanMethodRocketMQListener) rocketMQListener).getMethod() : ((BeanMethodRocketMQReplyListener) rocketMQReplyListener).getMethod();
             return method.getGenericReturnType();
         }
         Type matchedGenericInterface = null;
